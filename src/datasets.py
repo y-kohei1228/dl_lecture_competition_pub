@@ -536,13 +536,24 @@ class DatasetProvider:
         assert delta_t_ms == 100
         self.config = config
         self.name_mapper_test = []
+        
+        # 追加
+        # 画像の前処理
+        self.transform = tf.Compose([
+            tf.Resize((128, 128)),  # 形状を同じにするためのResize
+            tf.RandomHorizontalFlip(),  # データ拡張
+            tf.RandomVerticalFlip(),    # データ拡張
+            tf.ToTensor()
+        ])
+        # 追加終了
 
         # Assemble test sequences
         test_sequences = list()
         for child in test_path.iterdir():
             self.name_mapper_test.append(str(child).split("/")[-1])
             test_sequences.append(Sequence(child, representation_type, 'test', delta_t_ms, num_bins,
-                                               transforms=[],
+                                               #transforms=[],
+                                               transforms=self.transform,
                                                name_idx=len(
                                                    self.name_mapper_test)-1,
                                                visualize=visualize))
