@@ -14,6 +14,9 @@ from typing import Dict, Any
 import os
 import time
 
+# 環境変数の設定
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:64' # 追記。
+os.environ['HYDRA_FULL_ERROR'] = '1' # 追記。
 
 class RepresentationType(Enum):
     VOXEL = auto()
@@ -87,10 +90,11 @@ def main(args: DictConfig):
     test_set = loader.get_test_dataset()
     collate_fn = train_collate
     train_data = DataLoader(train_set,
-                                 batch_size=args.data_loader.train.batch_size,
-                                 shuffle=args.data_loader.train.shuffle,
-                                 collate_fn=collate_fn,
-                                 drop_last=False)
+                                #batch_size=args.data_loader.train.batch_size,
+                                batch_size=args.data_loader.train.batch_size // 4, # バッチサイズを1/4に。
+                                shuffle=args.data_loader.train.shuffle,
+                                collate_fn=collate_fn,
+                                drop_last=False)
     test_data = DataLoader(test_set,
                                  batch_size=args.data_loader.test.batch_size,
                                  shuffle=args.data_loader.test.shuffle,
@@ -123,6 +127,7 @@ def main(args: DictConfig):
     #   Start training
     # ------------------
     model.train()
+    scaler = torch.cuda.amp.GradScaler() # 追記
     for epoch in range(args.train.epochs):
         total_loss = 0
         print("on epoch: {}".format(epoch+1))
@@ -130,16 +135,35 @@ def main(args: DictConfig):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
+            
+            with torch.cuda.amp.autocast():
+                pred_flows = model(event_image) # list of [B, 2, H, W] at different scales
+                loss: torch.Tensor = compute_epe_error(pred_flows, ground_truth_flow)
+            
             # flow = model(event_image) # [B, 2, 480, 640]
-            pred_flows = model(event_image) # list of [B, 2, H, W] at different scales
+            #pred_flows = model(event_image) # list of [B, 2, H, W] at different scales
             # loss: torch.Tensor = compute_epe_error(flow, ground_truth_flow)
-            loss: torch.Tensor = compute_epe_error(pred_flows, ground_truth_flow)
+            #loss: torch.Tensor = compute_epe_error(pred_flows, ground_truth_flow)
             print(f"batch {i} loss: {loss.item()}")
+            """
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            """
+            # 追記。
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            # 追記終了。
 
             total_loss += loss.item()
+            
+            # 追記。
+            # GPUメモリのクリア
+            del event_image, ground_truth_flow, pred_flows
+            torch.cuda.empty_cache()
+            # 追記終了。
+            
         print(f'Epoch {epoch+1}, Loss: {total_loss / len(train_data)}')
 
     # Create the directory if it doesn't exist
@@ -165,6 +189,10 @@ def main(args: DictConfig):
             # batch_flow = model(event_image) # [1, 2, 480, 640]
             batch_flow = model(event_image)[0] # [1, 2, 480, 640](最終スケールの出力)
             flow = torch.cat((flow, batch_flow), dim=0)  # [N, 2, 480, 640]
+            
+            # エポック終了後にメモリをクリア
+            torch.cuda.empty_cache()
+            
         print("test done")
     # ------------------
     #  save submission
