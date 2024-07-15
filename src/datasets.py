@@ -176,7 +176,8 @@ class EventSlicer:
 
 class Sequence(Dataset):
     def __init__(self, seq_path: Path, representation_type: RepresentationType, mode: str = 'test', delta_t_ms: int = 100,
-                 num_bins: int = 4, transforms=[], name_idx=0, visualize=False, load_gt=False):
+                #num_bins: int = 4, transforms=[], name_idx=0, visualize=False, load_gt=False):
+                num_bins: int = 4, transforms=[], custom_transforms=None, name_idx=0, visualize=True, load_gt=False):
         assert num_bins >= 1
         assert delta_t_ms == 100
         assert seq_path.is_dir()
@@ -208,6 +209,7 @@ class Sequence(Dataset):
         self.mode = mode
         self.name_idx = name_idx
         self.visualize_samples = visualize
+        self.custom_transforms = custom_transforms  # 追加
         self.load_gt = load_gt
         self.transforms = transforms
         if self.mode == "test":
@@ -361,6 +363,15 @@ class Sequence(Dataset):
 
     def __getitem__(self, idx):
         sample = self.get_data(idx)
+        
+        # 追加
+        if self.transforms:
+            if not isinstance(sample['event_volume'], torch.Tensor):
+                sample['event_volume'] = self.transforms(sample['event_volume'])
+        if self.custom_transforms:
+            sample['event_volume'] = self.custom_transforms(sample['event_volume'])
+        # 追加終了。
+        
         return sample
 
     def get_voxel_grid(self, idx):
@@ -442,7 +453,7 @@ class Sequence(Dataset):
 
 class SequenceRecurrent(Sequence):
     def __init__(self, seq_path: Path, representation_type: RepresentationType, mode: str = 'test', delta_t_ms: int = 100,
-                 num_bins: int = 15, transforms=None, sequence_length=1, name_idx=0, visualize=False, load_gt=False):
+                 num_bins: int = 15, transforms=None, sequence_length=1, name_idx=0, visualize=True, load_gt=True):
         super(SequenceRecurrent, self).__init__(seq_path, representation_type, mode, delta_t_ms, transforms=transforms,
                                                 name_idx=name_idx, visualize=visualize, load_gt=load_gt)
         self.crop_size = self.transforms['randomcrop'] if 'randomcrop' in self.transforms else None
@@ -541,10 +552,16 @@ class DatasetProvider:
         # 画像の前処理
         self.transform = tf.Compose([
             tf.Resize((128, 128)),  # 形状を同じにするためのResize
-            tf.RandomHorizontalFlip(),  # データ拡張
-            tf.RandomVerticalFlip(),    # データ拡張
+            tf.RandomCrop((120, 120)),  # ランダムクロップ
+            tf.RandomRotation(10),    # ランダム回転
             tf.ToTensor()
         ])
+        
+        # データ拡張のためのカスタム変換
+        self.custom_transform = tf.Compose([
+            tf.Lambda(lambda x: x + torch.randn_like(x) * 0.01)  # ガウシアンノイズの追加
+        ])
+        
         # 追加終了
 
         # Assemble test sequences
@@ -570,7 +587,8 @@ class DatasetProvider:
             extra_arg = dict()
             train_sequences.append(Sequence(Path(train_path) / seq,
                                    representation_type=representation_type, mode="train",
-                                   load_gt=True, **extra_arg))
+                                   # load_gt=True, **extra_arg))
+                                    load_gt=True, transforms=self.transform, custom_transforms=self.custom_transform, **extra_arg)) #追加
             self.train_dataset: torch.utils.data.ConcatDataset[Sequence] = torch.utils.data.ConcatDataset(train_sequences)
 
     def get_test_dataset(self):
