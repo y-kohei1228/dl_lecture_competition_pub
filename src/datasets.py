@@ -16,6 +16,7 @@ import torch.utils.data
 from torchvision.transforms import RandomCrop
 from torchvision import transforms as tf
 from torch.utils.data import Dataset
+from sklearn.preprocessing import StandardScaler # 追加
 
 
 from src.utils import RepresentationType, VoxelGrid, flow_16bit_to_float
@@ -548,13 +549,22 @@ class DatasetProvider:
         self.config = config
         self.name_mapper_test = []
         
+        self.zca = ZCAWhitening()
+        
+        # トレーニングデータを読み込み、ZCA白色化を適用
+        train_data = self.load_train_data(train_path)
+        if train_data.size == 0:
+            raise ValueError("トレーニングデータが空です。データの読み込みを確認してください。")
+        self.zca.fit(train_data)
+        
         # 追加
         # 画像の前処理
         self.transform = tf.Compose([
             tf.Resize((128, 128)),  # 形状を同じにするためのResize
             tf.RandomCrop((120, 120)),  # ランダムクロップ
             tf.RandomRotation(10),    # ランダム回転
-            tf.ToTensor()
+            tf.ToTensor(),
+            tf.Lambda(lambda x: torch.tensor(self.zca.transform(x.numpy().reshape(1, -1)).reshape(128, 128)))  # ZCA白色化
         ])
         
         # データ拡張のためのカスタム変換
@@ -591,6 +601,20 @@ class DatasetProvider:
                                     load_gt=True, transforms=self.transform, custom_transforms=self.custom_transform, **extra_arg)) #追加
             self.train_dataset: torch.utils.data.ConcatDataset[Sequence] = torch.utils.data.ConcatDataset(train_sequences)
 
+    def load_train_data(self, train_path):
+        # トレーニングデータを読み込み、ZCA白色化のために準備
+        train_data = []
+        for seq in os.listdir(train_path):
+            seq_path = Path(train_path) / seq
+            for img_path in seq_path.glob('*.png'):
+                img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    print(f"Failed to read image: {img_path}")
+                    continue
+                img = cv2.resize(img, (128, 128))
+                train_data.append(img.flatten())
+        return np.array(train_data)
+                
     def get_test_dataset(self):
         return self.test_dataset
 
@@ -639,3 +663,76 @@ def rec_train_collate(sample_list):
         seq_of_batch.append(train_collate(
             [sample[i] for sample in sample_list]))
     return seq_of_batch
+
+# 以下追記。
+# ZCA白色化の実装
+""""
+class ZCAWhitening():
+    
+    
+    def __init__(self, epsilon=1e-4, device="cuda"):  # 計算が重いのでGPUを用いる
+        self.epsilon = epsilon
+        self.device = device
+
+    def fit(self, images):  # 変換行列と平均をデータから計算
+        
+        #Argument
+        #--------
+        #images : torchvision.datasets.cifar.CIFAR10
+        #    入力画像（訓練データ全体）．(N, C, H, W)
+        
+        x = images[0][0].reshape(1, -1)  # 画像（1枚）を1次元化
+        self.mean = torch.zeros([1, x.size()[1]]).to(self.device)  # 平均値を格納するテンソル．xと同じ形状
+        con_matrix = torch.zeros([x.size()[1], x.size()[1]]).to(self.device)
+        for i in range(len(images)):  # 各データについての平均を取る
+            x = images[i][0].reshape(1, -1).to(self.device)
+            self.mean += x / len(images)
+            con_matrix += torch.mm(x.t(), x) / len(images)
+            if i % 10000 == 0:
+                print("{0}/{1}".format(i, len(images)))
+        con_matrix -= torch.mm(self.mean.t(), self.mean)
+        # E: 固有値 V: 固有ベクトルを並べたもの
+        E, V = torch.linalg.eigh(con_matrix)  # 固有値分解
+        self.ZCA_matrix = torch.mm(torch.mm(V, torch.diag((E.squeeze()+self.epsilon)**(-0.5))), V.t())  # A(\Lambda + \epsilon I)^{1/2}A^T
+        print("completed!")
+
+    def __call__(self, x):
+        size = x.size()
+        x = x.reshape(1, -1).to(self.device)
+        x -= self.mean  # x - \bar{x}
+        x = torch.mm(x, self.ZCA_matrix.t())
+        x = x.reshape(tuple(size))
+        x = x.to("cpu")
+        return x
+"""
+    
+class ZCAWhitening:
+    def __init__(self, epsilon=1e-5):
+        self.epsilon = epsilon
+        self.mean = None
+        self.ZCA_matrix = None
+
+    def fit(self, X):
+        # 標準化
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
+        self.mean = scaler.mean_
+
+        # 共分散行列の計算
+        cov_matrix = np.cov(X, rowvar=False)
+
+        # 固有値分解
+        U, S, _ = np.linalg.svd(cov_matrix)
+
+        # ZCA行列の計算
+        self.ZCA_matrix = U @ np.diag(1.0 / np.sqrt(S + self.epsilon)) @ U.T
+
+    def transform(self, X):
+        X = X - self.mean
+        return X @ self.ZCA_matrix
+
+    def fit_transform(self, X):
+        self.fit(X)
+        return self.transform(X)
+    
+# 追記修了。
