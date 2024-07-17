@@ -605,15 +605,24 @@ class DatasetProvider:
         # トレーニングデータを読み込み、ZCA白色化のために準備
         train_data = []
         for seq in os.listdir(train_path):
-            seq_path = Path(train_path) / seq
+            seq_path = Path(train_path)/seq/"flow_forward"
+            #print("seq_path.glob:", seq_path.glob('*.png'))
+            if not seq_path.is_dir():
+                print(f"Skipping non-directory: {seq_path}")
+                continue
             for img_path in seq_path.glob('*.png'):
+                #print("img_path:", img_path)
                 img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
                 if img is None:
                     print(f"Failed to read image: {img_path}")
                     continue
                 img = cv2.resize(img, (128, 128))
                 train_data.append(img.flatten())
-        return np.array(train_data)
+        # リストを2次元配列に変換
+        train_data = np.array(train_data)
+        #print("train_data:", train_data)
+        print(f"Loaded {train_data.shape[0]} training samples.")
+        return train_data
                 
     def get_test_dataset(self):
         return self.test_dataset
