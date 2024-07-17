@@ -63,6 +63,39 @@ class EVFlowNet(nn.Module):
         flow_dict['flow3'] = flow.clone()
 
         return flow
+
+class EVFlowNetTransformer(nn.Module):
+    def __init__(self, args):
+        super(EVFlowNetTransformer, self).__init__()
+        self._args = args
+
+        self.embedding = nn.Linear(4, 64)  # 入力チャネル数を埋め込み次元に変換
+
+        encoder_layer = nn.TransformerEncoderLayer(d_model=64, nhead=8)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
+
+        decoder_layer = nn.TransformerDecoderLayer(d_model=64, nhead=8)
+        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=6)
+
+        self.flow_predictor = nn.Linear(64, 2)  # 埋め込み次元をフローの次元に変換
+
+    def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        # 入力を埋め込み
+        inputs = self.embedding(inputs)
+
+        # Transformerエンコーダ
+        memory = self.transformer_encoder(inputs)
+
+        # Transformerデコーダ
+        outputs = self.transformer_decoder(inputs, memory)
+
+        # フローの予測
+        flow = self.flow_predictor(outputs)
+
+        return {'flow': flow}
+
+# 既存のコードのエンコーダとデコーダの部分をTransformerに置き換えました。
+# 埋め込み層を追加し、Transformerエンコーダとデコーダを使用してフローを予測します。
         
 
 # if __name__ == "__main__":
