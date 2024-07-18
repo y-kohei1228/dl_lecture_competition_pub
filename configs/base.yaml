@@ -3,9 +3,9 @@ seed: 42
 num_epoch: 100
 data_loader:
   common:
-    num_voxel_bins: 15
+    num_voxel_bins: 10
   train:
-    batch_size: 8
+    batch_size: 16
     shuffle: false
   test:
     batch_size: 1
