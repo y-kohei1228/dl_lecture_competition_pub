@@ -561,10 +561,10 @@ class DatasetProvider:
         # 画像の前処理
         self.transform = tf.Compose([
             tf.Resize((128, 128)),  # 形状を同じにするためのResize
-            tf.RandomCrop((120, 120)),  # ランダムクロップ
-            tf.RandomRotation(10),    # ランダム回転
+            #tf.RandomCrop((120, 120)),  # ランダムクロップ
+            #tf.RandomRotation(10),    # ランダム回転
             tf.ToTensor(),
-            tf.Lambda(lambda x: torch.tensor(self.zca.transform(x.numpy().reshape(1, -1)).reshape(128, 128)))  # ZCA白色化
+            #tf.Lambda(lambda x: torch.tensor(self.zca.transform(x.numpy().reshape(1, -1)).reshape(128, 128)))  # ZCA白色化
         ])
         
         # データ拡張のためのカスタム変換
