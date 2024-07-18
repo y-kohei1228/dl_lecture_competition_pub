@@ -71,17 +71,19 @@ class EVFlowNetTransformer(nn.Module):
 
         self.embedding = nn.Linear(4, 64)  # 入力チャネル数を埋め込み次元に変換
 
-        encoder_layer = nn.TransformerEncoderLayer(d_model=64, nhead=8)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=64, nhead=8, batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=6)
 
-        decoder_layer = nn.TransformerDecoderLayer(d_model=64, nhead=8)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=64, nhead=8, batch_first=True)
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=6)
 
         self.flow_predictor = nn.Linear(64, 2)  # 埋め込み次元をフローの次元に変換
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         # 入力を埋め込み
-        inputs = self.embedding(inputs)
+        B, C, H, W = inputs.shape  # バッチサイズ、チャネル数、高さ、幅を取得
+        inputs = inputs.view(B, C, -1).permute(0, 2, 1)  # (B, C, H*W) -> (B, H*W, C)
+        inputs = self.embedding(inputs)  # (B, H*W, 4) -> (B, H*W, 64)
 
         # Transformerエンコーダ
         memory = self.transformer_encoder(inputs)
@@ -90,7 +92,8 @@ class EVFlowNetTransformer(nn.Module):
         outputs = self.transformer_decoder(inputs, memory)
 
         # フローの予測
-        flow = self.flow_predictor(outputs)
+        flow = self.flow_predictor(outputs)  # (B, H*W, 64) -> (B, H*W, 2)
+        flow = flow.permute(0, 2, 1).view(B, 2, H, W)  # (B, H*W, 2) -> (B, 2, H, W)
 
         return {'flow': flow}
 
